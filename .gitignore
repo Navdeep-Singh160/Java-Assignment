@@ -1,0 +1,10 @@
+# Secrets - never commit
+config.properties
+
+# Runtime logs
+*.log
+*.log.lck
+
+# Build output of the loan project
+/bin/
+/out/

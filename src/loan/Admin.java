@@ -1,286 +1,189 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.util.Scanner;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 
-public class Admin {
+/** Administrator screens for managing users. */
+public final class Admin {
 
-    // View all users
+    private Admin() { }
+
     public static void viewAllUsers() {
 
-        String sql = "SELECT id, username, full_name, email, mobile, role, account_locked FROM users";
+        List<User> users = UserDao.findAll();
 
-        try {
+        System.out.println("----- All Users -----");
 
-            Connection con = DBConnection.getConnection();
-            PreparedStatement ps = con.prepareStatement(sql);
-            ResultSet rs = ps.executeQuery();
-
-            System.out.println("----- All Users -----");
-
-            while (rs.next()) {
-
-                System.out.println("ID: " + rs.getInt("id"));
-                System.out.println("Username: " + rs.getString("username"));
-                System.out.println("Name: " + rs.getString("full_name"));
-                System.out.println("Email: " + rs.getString("email"));
-                System.out.println("Mobile: " + rs.getString("mobile"));
-                System.out.println("Role: " + rs.getString("role"));
-                System.out.println("Account Locked: " + rs.getBoolean("account_locked"));
-                System.out.println("---------------------");
-            }
-
-            rs.close();
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to view users.");
-            e.printStackTrace();
-        }
-    }
-
-
-    // Search user
-    public static void searchUser() {
-
-        Scanner sc = new Scanner(System.in);
-
-        System.out.print("Enter username to search: ");
-        String username = sc.nextLine();
-
-        String sql = "SELECT * FROM users WHERE username = ?";
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, username);
-
-            ResultSet rs = ps.executeQuery();
-
-            if (rs.next()) {
-
-                System.out.println("----- User Found -----");
-                System.out.println("ID: " + rs.getInt("id"));
-                System.out.println("Username: " + rs.getString("username"));
-                System.out.println("Name: " + rs.getString("full_name"));
-                System.out.println("Email: " + rs.getString("email"));
-                System.out.println("Mobile: " + rs.getString("mobile"));
-                System.out.println("Role: " + rs.getString("role"));
-                System.out.println("Account Locked: " + rs.getBoolean("account_locked"));
-
-            } else {
-
-                System.out.println("User not found.");
-            }
-
-            rs.close();
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to search user.");
-            e.printStackTrace();
-        }
-    }
-
-
-    // Edit user
-    public static void editUser() {
-
-        Scanner sc = new Scanner(System.in);
-
-        System.out.print("Enter username to edit: ");
-        String username = sc.nextLine();
-
-        System.out.print("Enter new full name: ");
-        String fullName = sc.nextLine();
-
-        System.out.print("Enter new email: ");
-        String email = sc.nextLine();
-
-        System.out.print("Enter new mobile number: ");
-        String mobile = sc.nextLine();
-
-        String sql = "UPDATE users SET full_name = ?, email = ?, mobile = ? WHERE username = ?";
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, fullName);
-            ps.setString(2, email);
-            ps.setString(3, mobile);
-            ps.setString(4, username);
-
-            int rows = ps.executeUpdate();
-
-            if (rows > 0) {
-
-                System.out.println("User details updated successfully!");
-
-            } else {
-
-                System.out.println("User not found.");
-            }
-
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to edit user.");
-            e.printStackTrace();
-        }
-    }
-
-
-    // Activate or deactivate user
-    public static void changeUserStatus() {
-
-        Scanner sc = new Scanner(System.in);
-
-        System.out.print("Enter username: ");
-        String username = sc.nextLine();
-
-        System.out.print("Enter 1 to Activate or 2 to Deactivate: ");
-        int choice = sc.nextInt();
-
-        boolean locked;
-
-        if (choice == 1) {
-
-            locked = false;
-
-        } else if (choice == 2) {
-
-            locked = true;
-
-        } else {
-
-            System.out.println("Invalid choice.");
+        if (users.isEmpty()) {
+            System.out.println("No users found.");
             return;
         }
 
-        String sql = "UPDATE users SET account_locked = ? WHERE username = ?";
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setBoolean(1, locked);
-            ps.setString(2, username);
-
-            int rows = ps.executeUpdate();
-
-            if (rows > 0) {
-
-                // Get user's email
-                String emailSql = "SELECT email FROM users WHERE username = ?";
-
-                PreparedStatement emailPs = con.prepareStatement(emailSql);
-
-                emailPs.setString(1, username);
-
-                ResultSet emailRs = emailPs.executeQuery();
-
-                if (emailRs.next()) {
-
-                    String email = emailRs.getString("email");
-
-                    if (locked) {
-
-                        System.out.println("User deactivated successfully!");
-
-                        EmailNotification.sendEmail(
-                            email,
-                            "Your account has been deactivated by the administrator."
-                        );
-
-                    } else {
-
-                        System.out.println("User activated successfully!");
-
-                        EmailNotification.sendEmail(
-                            email,
-                            "Your account has been activated by the administrator."
-                        );
-                    }
-                }
-
-                emailRs.close();
-                emailPs.close();
-
-            } else {
-
-                System.out.println("User not found.");
-            }
-
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to change user status.");
-            e.printStackTrace();
+        for (User user : users) {
+            printUser(user);
         }
     }
 
+    public static void searchUser() {
 
-    // Delete user
-    public static void deleteUser() {
+        String query = ConsoleIO.readLine("Enter username or email to search: ");
 
-        Scanner sc = new Scanner(System.in);
+        if (query.isEmpty()) {
+            System.out.println("Please enter a username or email.");
+            return;
+        }
 
-        System.out.print("Enter username to delete: ");
-        String username = sc.nextLine();
+        Optional<User> found = UserDao.findByLogin(query);
 
-        String sql = "DELETE FROM users WHERE username = ?";
+        if (found.isPresent()) {
+            System.out.println("----- User Found -----");
+            printUser(found.get());
+        } else {
+            System.out.println("User not found.");
+        }
+    }
+
+    /** Blank answers keep the current value, so a field can no longer be wiped by accident. */
+    public static void editUser() {
+
+        String username = ConsoleIO.readLine("Enter username to edit: ");
+
+        Optional<User> found = UserDao.findByUsername(username);
+
+        if (found.isEmpty()) {
+            System.out.println("User not found.");
+            return;
+        }
+
+        User user = found.get();
+
+        String fullName = optionalInput("Enter new full name", user.getFullName(), Validator::fullName);
+        String email = optionalInput("Enter new email", user.getEmail(), Validator::email)
+                .toLowerCase(Locale.ROOT);
+        String mobile = optionalInput("Enter new mobile number", user.getMobile(), Validator::mobile);
 
         try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, username);
-
-            int rows = ps.executeUpdate();
-
-            if (rows > 0) {
-
-                System.out.println("User deleted successfully!");
-
+            if (UserDao.updateProfile(user.getUsername(), fullName, email, mobile)) {
+                System.out.println("User details updated successfully!");
             } else {
-
                 System.out.println("User not found.");
             }
 
-            ps.close();
-            con.close();
+        } catch (DataAccessException e) {
 
-        } catch (Exception e) {
-
-            System.out.println("Unable to delete user.");
-            e.printStackTrace();
+            if (e.isDuplicate()) {
+                System.out.println("That email is already used by another account.");
+            } else {
+                throw e;
+            }
         }
+    }
+
+    /** Activate (unlock) or deactivate (lock) an account. */
+    public static void changeUserStatus(User actor) {
+
+        String username = ConsoleIO.readLine("Enter username: ");
+
+        Optional<User> found = UserDao.findByUsername(username);
+
+        if (found.isEmpty()) {
+            System.out.println("User not found.");
+            return;
+        }
+
+        User target = found.get();
+
+        System.out.println("1. Activate");
+        System.out.println("2. Deactivate");
+
+        boolean lock = ConsoleIO.readInt("Enter choice: ", 1, 2) == 2;
+
+        if (lock && target.getId() == actor.getId()) {
+            System.out.println("You cannot deactivate your own account.");
+            return;
+        }
+
+        if (!UserDao.setLocked(target.getUsername(), lock)) {
+            System.out.println("User not found.");
+            return;
+        }
+
+        System.out.println(lock ? "User deactivated successfully!" : "User activated successfully!");
+
+        EmailNotification.sendEmail(target.getEmail(),
+                lock ? "Your account has been deactivated by the administrator."
+                     : "Your account has been activated by the administrator.");
+    }
+
+    public static void deleteUser(User actor) {
+
+        String username = ConsoleIO.readLine("Enter username to delete: ");
+
+        Optional<User> found = UserDao.findByUsername(username);
+
+        if (found.isEmpty()) {
+            System.out.println("User not found.");
+            return;
+        }
+
+        User target = found.get();
+
+        if (target.getId() == actor.getId()) {
+            System.out.println("You cannot delete your own account.");
+            return;
+        }
+
+        if (target.isAdmin() && UserDao.countAdmins() <= 1) {
+            System.out.println("The last administrator account cannot be deleted.");
+            return;
+        }
+
+        if (!ConsoleIO.confirm("Permanently delete '" + target.getUsername() + "'?")) {
+            System.out.println("Deletion cancelled.");
+            return;
+        }
+
+        try {
+            if (UserDao.delete(target.getUsername())) {
+                System.out.println("User deleted successfully!");
+            } else {
+                System.out.println("User not found.");
+            }
+
+        } catch (DataAccessException e) {
+
+            if (e.isConstraintViolation()) {
+                System.out.println("This user has loan applications on record and cannot be "
+                        + "deleted. Deactivate the account instead.");
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    // ---------- helpers ----------
+
+    /** Prompts with the current value; blank input keeps it, anything else must validate. */
+    private static String optionalInput(String label, String current,
+                                        java.util.function.Function<String, String> validator) {
+
+        String entered = ConsoleIO.readValidated(
+                label + " [" + current + "] (blank to keep): ",
+                value -> value.isEmpty() ? null : validator.apply(value));
+
+        return entered.isEmpty() ? current : entered;
+    }
+
+    private static void printUser(User user) {
+
+        System.out.println("ID: " + user.getId());
+        System.out.println("Username: " + user.getUsername());
+        System.out.println("Name: " + user.getFullName());
+        System.out.println("Email: " + user.getEmail());
+        System.out.println("Mobile: " + user.getMobile());
+        System.out.println("Role: " + user.getRole());
+        System.out.println("Account Locked: " + user.isAccountLocked());
+        System.out.println("---------------------");
     }
 }
-
-
-
-
-
-
-
-
-

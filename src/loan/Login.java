@@ -1,128 +1,117 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.util.Scanner;
+import java.util.Optional;
+import java.util.logging.Level;
 
-public class Login {
+public final class Login {
 
-    public static String loginUser() {
+    public static final int MAX_FAILED_ATTEMPTS = 3;
 
-        Scanner sc = new Scanner(System.in);
+    private Login() { }
 
-        System.out.print("Enter username or email: ");
-        String usernameOrEmail = sc.nextLine();
+    /**
+     * @return the logged-in user, or null if the login failed (a message has been printed)
+     */
+    public static User loginUser() {
 
-        System.out.print("Enter password: ");
-        String password = sc.nextLine();
+        String usernameOrEmail = ConsoleIO.readLine("Enter username or email: ");
+        String password = ConsoleIO.readPassword("Enter password: ");
 
-        String sql = "SELECT * FROM users WHERE username = ? OR email = ?";
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, usernameOrEmail);
-            ps.setString(2, usernameOrEmail);
-
-            ResultSet rs = ps.executeQuery();
-
-            if (rs.next()) {
-
-                boolean locked = rs.getBoolean("account_locked");
-                int failedAttempts = rs.getInt("failed_attempts");
-                String role = rs.getString("role");
-
-                if (locked) {
-
-                    System.out.println("Account is locked.");
-                    return null;
-
-                } else if (rs.getString("password").equals(password)) {
-
-                    System.out.println("Login successful!");
-                    System.out.println("Role: " + role);
-
-                    String resetSql =
-                            "UPDATE users SET failed_attempts = 0 WHERE id = ?";
-
-                    PreparedStatement resetPs =
-                            con.prepareStatement(resetSql);
-
-                    resetPs.setInt(1, rs.getInt("id"));
-                    resetPs.executeUpdate();
-
-                    resetPs.close();
-                    rs.close();
-                    ps.close();
-                    con.close();
-
-                    return role;
-
-                } else {
-
-                    failedAttempts++;
-
-                    if (failedAttempts >= 3) {
-
-                        String lockSql =
-                                "UPDATE users SET failed_attempts = ?, account_locked = TRUE WHERE id = ?";
-
-                        PreparedStatement lockPs =
-                                con.prepareStatement(lockSql);
-
-                        lockPs.setInt(1, failedAttempts);
-                        lockPs.setInt(2, rs.getInt("id"));
-
-                        lockPs.executeUpdate();
-                        lockPs.close();
-
-                        System.out.println("Wrong password.");
-                        System.out.println("Account locked after 3 failed attempts.");
-
-                    } else {
-
-                        String updateSql =
-                                "UPDATE users SET failed_attempts = ? WHERE id = ?";
-
-                        PreparedStatement updatePs =
-                                con.prepareStatement(updateSql);
-
-                        updatePs.setInt(1, failedAttempts);
-                        updatePs.setInt(2, rs.getInt("id"));
-
-                        updatePs.executeUpdate();
-                        updatePs.close();
-
-                        System.out.println("Wrong password.");
-                        System.out.println("Failed attempts: " + failedAttempts);
-                    }
-                }
-
-            } else {
-
-                System.out.println("User not found.");
-            }
-
-            rs.close();
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Login failed.");
-            e.printStackTrace();
+        if (usernameOrEmail.isEmpty() || password.isEmpty()) {
+            System.out.println("Username/email and password are required.");
+            return null;
         }
 
-        return null;
+        Optional<User> found = UserDao.findByLogin(usernameOrEmail);
+
+        if (found.isEmpty()) {
+            PasswordUtil.burnTime(password);
+            System.out.println("Invalid username/email or password.");
+            return null;
+        }
+
+        User user = found.get();
+
+        if (!passwordMatches(user, password)) {
+            handleWrongPassword(user);
+            return null;
+        }
+
+        if (user.isAccountLocked()) {
+            System.out.println("This account is locked or deactivated. "
+                    + "Please contact an administrator.");
+            return null;
+        }
+
+        if (user.getFailedAttempts() > 0) {
+            UserDao.resetFailedAttempts(user.getId());
+        }
+
+        System.out.println("Login successful!");
+        System.out.println("Welcome, " + user.getFullName() + ".");
+
+        return user;
+    }
+
+    private static void handleWrongPassword(User user) {
+
+        // A locked account stays locked; do not keep counting.
+        if (user.isAccountLocked()) {
+            System.out.println("Invalid username/email or password.");
+            return;
+        }
+
+        UserDao.AttemptState state =
+                UserDao.recordFailedLogin(user.getId(), MAX_FAILED_ATTEMPTS);
+
+        System.out.println("Invalid username/email or password.");
+
+        if (state.locked()) {
+            System.out.println("Account locked after " + MAX_FAILED_ATTEMPTS
+                    + " failed attempts. Please contact an administrator.");
+        }
+    }
+
+    /**
+     * Checks the password against the stored hash. Accounts created before
+     * hashing was added still hold plain text; those are accepted once and
+     * immediately converted to a hash.
+     */
+    private static boolean passwordMatches(User user, String password) {
+
+        String stored = user.getPasswordHash();
+
+        if (PasswordUtil.isHashed(stored)) {
+
+            if (!PasswordUtil.verify(password, stored)) {
+                return false;
+            }
+
+            if (PasswordUtil.needsRehash(stored)) {
+                upgradeHash(user, password);
+            }
+
+            return true;
+        }
+
+        if (PasswordUtil.matchesLegacyPlaintext(password, stored)) {
+            upgradeHash(user, password);
+            return true;
+        }
+
+        PasswordUtil.burnTime(password);
+        return false;
+    }
+
+    private static void upgradeHash(User user, String password) {
+
+        try {
+            UserDao.updatePasswordHash(user.getId(), PasswordUtil.hash(password));
+
+        } catch (DataAccessException e) {
+            // Login is still valid; the upgrade will be retried next time.
+            AppLog.get(Login.class).log(Level.WARNING,
+                    "Could not upgrade password hash for user id " + user.getId(), e);
+        }
     }
 }
-
-
-
-
-
-

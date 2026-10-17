@@ -1,0 +1,10 @@
+# Copy this file to "config.properties" (same folder as the project root) and fill in your values.
+# config.properties is listed in .gitignore and must NEVER be committed.
+#
+# Alternatively set environment variables instead of using a file:
+#   LOAN_DB_URL, LOAN_DB_USER, LOAN_DB_PASSWORD
+# Environment variables take priority over this file.
+
+db.url=jdbc:mysql://localhost:3306/loan_system
+db.user=your_mysql_user
+db.password=your_mysql_password
