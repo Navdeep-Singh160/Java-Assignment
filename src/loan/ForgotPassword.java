@@ -1,62 +1,93 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.util.Scanner;
+import java.security.SecureRandom;
+import java.util.Locale;
+import java.util.Optional;
 
-public class ForgotPassword {
+/**
+ * Password reset with a one-time code.
+ *
+ * The old version let anyone who knew a registered email address set a new
+ * password for that account. Now a random 6-digit code is "emailed" (printed by
+ * the simulated {@link EmailNotification}), is stored only as a hash, expires
+ * after {@link #CODE_VALID_MINUTES} minutes and allows
+ * {@link ConsoleIO#MAX_ATTEMPTS} guesses.
+ *
+ * The same message is shown whether or not the email is registered, so the
+ * screen cannot be used to find out who has an account.
+ */
+public final class ForgotPassword {
+
+    private static final int CODE_VALID_MINUTES = 15;
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private ForgotPassword() { }
 
     public static void resetPassword() {
 
-        Scanner sc = new Scanner(System.in);
+        String email = ConsoleIO.readValidated("Enter registered email: ", Validator::email)
+                .toLowerCase(Locale.ROOT);
 
-        System.out.print("Enter registered email: ");
-        String email = sc.nextLine();
+        Optional<User> found = UserDao.findByEmail(email);
 
-        System.out.print("Enter new password: ");
-        String newPassword = sc.nextLine();
+        if (found.isPresent()) {
+            issueCode(found.get(), email);
+        }
 
-        try {
-            Connection con = DBConnection.getConnection();
+        System.out.println("If that email is registered, a reset code has been sent to it.");
 
-            String checkSql = "SELECT * FROM users WHERE email = ?";
+        if (!codeAccepted(found)) {
+            System.out.println("Invalid or expired reset code.");
+            found.ifPresent(user -> UserDao.clearResetToken(user.getId()));
+            return;
+        }
 
-            PreparedStatement checkPs = con.prepareStatement(checkSql);
-            checkPs.setString(1, email);
+        User user = found.get();
 
-            ResultSet rs = checkPs.executeQuery();
+        String newPassword = ConsoleIO.readNewPassword("Enter new password: ");
 
-            if (rs.next()) {
+        UserDao.completePasswordReset(user.getId(), PasswordUtil.hash(newPassword));
 
-                String updateSql =
-                        "UPDATE users SET password = ? WHERE email = ?";
+        System.out.println("Password changed successfully! You can now log in.");
+    }
 
-                PreparedStatement updatePs =
-                        con.prepareStatement(updateSql);
+    private static void issueCode(User user, String email) {
 
-                updatePs.setString(1, newPassword);
-                updatePs.setString(2, email);
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
 
-                updatePs.executeUpdate();
+        UserDao.saveResetToken(user.getId(), PasswordUtil.hash(code), CODE_VALID_MINUTES);
 
-                System.out.println("Password changed successfully!");
+        EmailNotification.sendEmail(email,
+                "Your password reset code is " + code
+                + ". It is valid for " + CODE_VALID_MINUTES + " minutes. "
+                + "If you did not request this, ignore this message.");
+    }
 
-                updatePs.close();
+    private static boolean codeAccepted(Optional<User> user) {
 
-            } else {
-                System.out.println("Email not registered.");
+        for (int attempt = 1; attempt <= ConsoleIO.MAX_ATTEMPTS; attempt++) {
+
+            String entered = ConsoleIO.readLine("Enter reset code: ");
+
+            if (user.isEmpty()) {
+                // same delay and same prompts as a real account
+                PasswordUtil.burnTime(entered);
+                continue;
             }
 
-            rs.close();
-            checkPs.close();
-            con.close();
+            Optional<String> tokenHash = UserDao.findValidResetTokenHash(user.get().getId());
 
-        } catch (Exception e) {
-            System.out.println("Password reset failed.");
-            e.printStackTrace();
+            if (tokenHash.isPresent() && PasswordUtil.verify(entered, tokenHash.get())) {
+                return true;
+            }
+
+            if (tokenHash.isEmpty()) {
+                return false;   // expired or already used
+            }
+
+            System.out.println("Incorrect code.");
         }
+
+        return false;
     }
 }
-
-

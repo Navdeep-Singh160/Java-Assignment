@@ -1,291 +1,231 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.util.Scanner;
+import java.util.List;
+import java.util.Optional;
 
-public class LoanApplication {
+/**
+ * Loan application screens for customers and administrators.
+ *
+ * This class now owns the whole review workflow. Before, two admin menu items
+ * (LoanApplication.reviewApplication and LoanApproval.reviewLoan) both changed
+ * loan status with different rules; approving through the first one left EMI,
+ * interest and total payable empty. There is now one path, and approval always
+ * calculates the EMI through {@link LoanCalculator}.
+ */
+public final class LoanApplication {
 
-    // Apply for loan
-    public static void applyForLoan() {
+    private LoanApplication() { }
 
-        Scanner sc = new Scanner(System.in);
+    // ---------- customer ----------
 
-        System.out.print("Enter username: ");
-        String username = sc.nextLine();
+    public static void applyForLoan(User sessionUser) {
 
-        System.out.println("1. Personal Loan");
-        System.out.println("2. Home Loan");
-        System.out.println("3. Car Loan");
+        // Re-read the account so PAN/CIBIL submitted earlier in this session are seen.
+        Optional<User> current = UserDao.findByUsername(sessionUser.getUsername());
 
-        System.out.print("Enter loan type: ");
-        int choice = sc.nextInt();
-
-        String loanType;
-        double interestRate;
-
-        if (choice == 1) {
-
-            loanType = "Personal Loan";
-            interestRate = 10.0;
-
-        } else if (choice == 2) {
-
-            loanType = "Home Loan";
-            interestRate = 7.5;
-
-        } else if (choice == 3) {
-
-            loanType = "Car Loan";
-            interestRate = 8.5;
-
-        } else {
-
-            System.out.println("Invalid loan type.");
+        if (current.isEmpty()) {
+            System.out.println("Your account could not be found. Please log in again.");
             return;
         }
 
-        System.out.print("Enter loan amount: ");
-        double loanAmount = sc.nextDouble();
+        User user = current.get();
 
-        System.out.print("Enter duration in months: ");
-        int duration = sc.nextInt();
-
-        System.out.print("Enter monthly income: ");
-        double income = sc.nextDouble();
-
-        sc.nextLine();
-
-        System.out.print("Enter purpose of loan: ");
-        String purpose = sc.nextLine();
-
-
-        String sql = "INSERT INTO loan_applications "
-                   + "(username, loan_type, loan_amount, duration, income, purpose, interest_rate) "
-                   + "VALUES (?, ?, ?, ?, ?, ?, ?)";
-
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, username);
-            ps.setString(2, loanType);
-            ps.setDouble(3, loanAmount);
-            ps.setInt(4, duration);
-            ps.setDouble(5, income);
-            ps.setString(6, purpose);
-            ps.setDouble(7, interestRate);
-
-            ps.executeUpdate();
-
-            System.out.println();
-            System.out.println("Loan application submitted successfully!");
-            System.out.println("Loan Type: " + loanType);
-            System.out.println("Interest Rate: " + interestRate + "%");
-            System.out.println("Application status: Pending");
-
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to submit loan application.");
-            e.printStackTrace();
+        if (user.getPan() == null || user.getCibilScore() == null) {
+            System.out.println("Please submit your PAN and CIBIL score first "
+                    + "(User Menu option 1). Your interest rate depends on it.");
+            return;
         }
+
+        int cibil = user.getCibilScore();
+        LoanType[] types = LoanType.values();
+
+        System.out.println();
+        for (int i = 0; i < types.length; i++) {
+            System.out.println((i + 1) + ". " + types[i].displayName()
+                    + " (" + types[i].rateFor(cibil) + "% p.a.)");
+        }
+
+        LoanType type = types[ConsoleIO.readInt("Enter loan type: ", 1, types.length) - 1];
+
+        double amount = ConsoleIO.readMoney("Enter loan amount: ",
+                LoanCalculator.MIN_AMOUNT, LoanCalculator.MAX_AMOUNT);
+
+        int months = ConsoleIO.readInt(
+                "Enter duration in months (" + LoanCalculator.MIN_MONTHS + "-"
+                        + LoanCalculator.MAX_MONTHS + "): ",
+                LoanCalculator.MIN_MONTHS, LoanCalculator.MAX_MONTHS);
+
+        double income = ConsoleIO.readMoney("Enter monthly income: ",
+                LoanCalculator.MIN_INCOME, LoanCalculator.MAX_INCOME);
+
+        String purpose = ConsoleIO.readValidated("Enter purpose of loan: ", Validator::purpose);
+
+        double rate = type.rateFor(cibil);
+
+        LoanCalculator.EmiResult estimate = LoanCalculator.calculate(amount, rate, months);
+
+        int id = LoanDao.create(user.getUsername(), type, amount, months, income, purpose, rate);
+
+        System.out.println();
+        System.out.println("Loan application #" + id + " submitted successfully!");
+        System.out.println("Loan Type: " + type.displayName());
+        System.out.println("Interest Rate: " + rate + "%");
+        System.out.println("Estimated EMI: " + money(estimate.emi()));
+        System.out.println("Application status: " + LoanStatus.PENDING.dbValue());
     }
 
+    public static void viewMyApplications(User sessionUser) {
 
-    // View all loan applications
+        List<Loan> loans = LoanDao.findByUsername(sessionUser.getUsername());
+
+        printLoans("Your Loan Applications", loans);
+    }
+
+    // ---------- admin ----------
+
     public static void viewApplications() {
 
-        String sql = "SELECT * FROM loan_applications";
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ResultSet rs = ps.executeQuery();
-
-            System.out.println("----- Loan Applications -----");
-
-            while (rs.next()) {
-
-                System.out.println("Application ID: " + rs.getInt("id"));
-                System.out.println("Username: " + rs.getString("username"));
-                System.out.println("Loan Type: " + rs.getString("loan_type"));
-                System.out.println("Loan Amount: " + rs.getDouble("loan_amount"));
-                System.out.println("Duration: " + rs.getInt("duration") + " months");
-                System.out.println("Income: " + rs.getDouble("income"));
-                System.out.println("Purpose: " + rs.getString("purpose"));
-                System.out.println("Interest Rate: " + rs.getDouble("interest_rate") + "%");
-                System.out.println("Status: " + rs.getString("status"));
-                System.out.println("Rejection Reason: " + rs.getString("rejection_reason"));
-                System.out.println("EMI: " + rs.getDouble("emi"));
-                System.out.println("Total Interest: " + rs.getDouble("total_interest"));
-                System.out.println("Total Payable: " + rs.getDouble("total_payable"));
-                System.out.println("-----------------------------");
-            }
-
-            rs.close();
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to view applications.");
-            e.printStackTrace();
-        }
+        printLoans("Loan Applications", LoanDao.findAll());
     }
 
-
-    // Review loan application
+    /** Approve (with EMI), reject (with reason) or request more information. */
     public static void reviewApplication() {
 
-        Scanner sc = new Scanner(System.in);
+        int id = ConsoleIO.readInt("Enter application ID: ", 1, Integer.MAX_VALUE);
 
-        System.out.print("Enter application ID: ");
-        int id = sc.nextInt();
+        Optional<Loan> found = LoanDao.findById(id);
 
-        System.out.println("1. Approve");
-        System.out.println("2. Reject");
-        System.out.println("3. Needs More Info");
-
-        System.out.print("Enter choice: ");
-        int choice = sc.nextInt();
-
-        sc.nextLine();
-
-        String status = "";
-        String reason = "";
-
-        if (choice == 1) {
-
-            status = "Approved";
-
-        } else if (choice == 2) {
-
-            status = "Rejected";
-
-            System.out.print("Enter rejection reason: ");
-            reason = sc.nextLine();
-
-        } else if (choice == 3) {
-
-            status = "Needs More Info";
-
-        } else {
-
-            System.out.println("Invalid choice.");
+        if (found.isEmpty()) {
+            System.out.println("Application not found.");
             return;
         }
 
+        Loan loan = found.get();
 
-        String sql = "UPDATE loan_applications "
-                   + "SET status = ?, rejection_reason = ? "
-                   + "WHERE id = ?";
+        printLoan(loan);
 
+        if (loan.isFinalised()) {
+            System.out.println("This application is already " + loan.status()
+                    + " and cannot be changed.");
+            return;
+        }
 
-        try {
+        System.out.println("1. Approve (calculates EMI)");
+        System.out.println("2. Reject");
+        System.out.println("3. Needs More Info");
+        System.out.println("4. Cancel");
 
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, status);
-            ps.setString(2, reason);
-            ps.setInt(3, id);
-
-            int rows = ps.executeUpdate();
-
-            if (rows > 0) {
-
-                System.out.println("Loan application updated successfully!");
-
-                // Get username
-                String userSql =
-                        "SELECT username FROM loan_applications WHERE id = ?";
-
-                PreparedStatement userPs =
-                        con.prepareStatement(userSql);
-
-                userPs.setInt(1, id);
-
-                ResultSet rs = userPs.executeQuery();
-
-                if (rs.next()) {
-
-                    String username = rs.getString("username");
-
-                    // Get email
-                    String emailSql =
-                            "SELECT email FROM users WHERE username = ?";
-
-                    PreparedStatement emailPs =
-                            con.prepareStatement(emailSql);
-
-                    emailPs.setString(1, username);
-
-                    ResultSet emailRs = emailPs.executeQuery();
-
-                    if (emailRs.next()) {
-
-                        String email = emailRs.getString("email");
-
-                        if (status.equals("Approved")) {
-
-                            EmailNotification.sendEmail(
-                                email,
-                                "Your loan application has been approved."
-                            );
-
-                        } else if (status.equals("Rejected")) {
-
-                            EmailNotification.sendEmail(
-                                email,
-                                "Your loan application has been rejected. Reason: "
-                                + reason
-                            );
-
-                        } else {
-
-                            EmailNotification.sendEmail(
-                                email,
-                                "More information is required for your loan application."
-                            );
-                        }
-                    }
-
-                    emailRs.close();
-                    emailPs.close();
-                }
-
-                rs.close();
-                userPs.close();
-
-            } else {
-
-                System.out.println("Application not found.");
-            }
-
-            ps.close();
-            con.close();
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to review application.");
-            e.printStackTrace();
+        switch (ConsoleIO.readInt("Enter choice: ", 1, 4)) {
+            case 1 -> approve(loan);
+            case 2 -> reject(loan);
+            case 3 -> requestMoreInfo(loan);
+            default -> System.out.println("No changes made.");
         }
     }
+
+    private static void approve(Loan loan) {
+
+        if (loan.interestRate() <= 0) {
+            System.out.println("This application has no valid interest rate and cannot be approved.");
+            return;
+        }
+
+        LoanCalculator.EmiResult result =
+                LoanCalculator.calculate(loan.loanAmount(), loan.interestRate(), loan.duration());
+
+        if (!LoanDao.markApproved(loan.id(), result.emi(),
+                result.totalInterest(), result.totalPayable())) {
+            System.out.println("This application was changed by someone else. "
+                    + "Please open it again.");
+            return;
+        }
+
+        System.out.println();
+        System.out.println("Loan approved successfully!");
+        System.out.println("Interest Rate: " + loan.interestRate() + "%");
+        System.out.println("Monthly EMI: " + money(result.emi()));
+        System.out.println("Total Interest: " + money(result.totalInterest()));
+        System.out.println("Total Payable: " + money(result.totalPayable()));
+
+        EmailNotification.sendToUser(loan.username(),
+                "Your loan application #" + loan.id() + " has been approved. "
+                + "Monthly EMI: " + money(result.emi())
+                + ", Total Interest: " + money(result.totalInterest())
+                + ", Total Payable: " + money(result.totalPayable()));
+    }
+
+    private static void reject(Loan loan) {
+
+        String reason = ConsoleIO.readValidated("Enter rejection reason: ", Validator::reason);
+
+        if (!LoanDao.markRejected(loan.id(), reason)) {
+            System.out.println("This application was changed by someone else. "
+                    + "Please open it again.");
+            return;
+        }
+
+        System.out.println("Loan rejected successfully!");
+
+        EmailNotification.sendToUser(loan.username(),
+                "Your loan application #" + loan.id() + " has been rejected. Reason: " + reason);
+    }
+
+    private static void requestMoreInfo(Loan loan) {
+
+        if (!LoanDao.markNeedsMoreInfo(loan.id())) {
+            System.out.println("This application was changed by someone else. "
+                    + "Please open it again.");
+            return;
+        }
+
+        System.out.println("Application marked as '" + LoanStatus.NEEDS_MORE_INFO.dbValue() + "'.");
+
+        EmailNotification.sendToUser(loan.username(),
+                "More information is required for your loan application #" + loan.id() + ".");
+    }
+
+    // ---------- shared display ----------
+
+    private static void printLoans(String title, List<Loan> loans) {
+
+        System.out.println("----- " + title + " -----");
+
+        if (loans.isEmpty()) {
+            System.out.println("No applications found.");
+            return;
+        }
+
+        for (Loan loan : loans) {
+            printLoan(loan);
+        }
+    }
+
+    private static void printLoan(Loan loan) {
+
+        System.out.println("Application ID: " + loan.id());
+        System.out.println("Username: " + loan.username());
+        System.out.println("Loan Type: " + loan.loanType());
+        System.out.println("Loan Amount: " + money(loan.loanAmount()));
+        System.out.println("Duration: " + loan.duration() + " months");
+        System.out.println("Income: " + money(loan.income()));
+        System.out.println("Purpose: " + loan.purpose());
+        System.out.println("Interest Rate: " + loan.interestRate() + "%");
+        System.out.println("Status: " + loan.status());
+
+        if (loan.rejectionReason() != null && !loan.rejectionReason().isBlank()) {
+            System.out.println("Rejection Reason: " + loan.rejectionReason());
+        }
+
+        if (loan.emi() != null) {
+            System.out.println("EMI: " + money(loan.emi()));
+            System.out.println("Total Interest: " + money(loan.totalInterest()));
+            System.out.println("Total Payable: " + money(loan.totalPayable()));
+        }
+
+        System.out.println("-----------------------------");
+    }
+
+    private static String money(double value) {
+        return String.format("%,.2f", value);
+    }
 }
-
-
-
-
-
-

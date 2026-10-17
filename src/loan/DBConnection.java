@@ -2,28 +2,40 @@ package loan;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.logging.Level;
 
-public class DBConnection {
+/**
+ * Opens database connections using settings from {@link AppConfig}.
+ * Callers must close the connection (use try-with-resources).
+ */
+public final class DBConnection {
 
+    private DBConnection() { }
+
+    /**
+     * @return an open connection; never null
+     * @throws ConfigException      if the connection settings are missing
+     * @throws DataAccessException  if the database cannot be reached
+     */
     public static Connection getConnection() {
 
-        Connection con = null;
+        String url = AppConfig.dbUrl();
+        String user = AppConfig.dbUser();
+        String password = AppConfig.dbPassword();
 
         try {
-            con = DriverManager.getConnection(
-                "jdbc:mysql://localhost:3306/loan_system",
-                "root",
-                "Navdeep@2006"
-            );
+            return DriverManager.getConnection(url, user, password);
 
-            System.out.println("Database connected successfully!");
+        } catch (SQLException e) {
 
-        } catch (Exception e) {
-            System.out.println("Database connection failed!");
-            e.printStackTrace();
+            AppLog.get(DBConnection.class).log(Level.SEVERE,
+                    "Database connection failed [SQLState=" + e.getSQLState() + "]", e);
+
+            throw new DataAccessException(
+                    "Could not connect to the database. Check your settings in "
+                    + "config.properties, that MySQL is running, and that the "
+                    + "MySQL JDBC driver is on the classpath.", e);
         }
-
-        return con;
     }
 }
-

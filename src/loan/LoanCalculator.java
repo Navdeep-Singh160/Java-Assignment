@@ -1,203 +1,77 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.util.Scanner;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
-public class LoanCalculator {
+/**
+ * Pure loan maths and business limits. No database or console access, so it
+ * can be tested on its own and is shared by every screen that needs EMI figures.
+ */
+public final class LoanCalculator {
 
-    public static void processLoan() {
+    // ----- business limits (used for input validation everywhere) -----
+    public static final int MIN_CIBIL = 600;
+    public static final int MAX_CIBIL = 900;
+    public static final int PREFERRED_CIBIL = 750;
 
-        Scanner sc = new Scanner(System.in);
+    public static final double MIN_AMOUNT = 1_000;
+    public static final double MAX_AMOUNT = 100_000_000;
 
-        System.out.print("Enter username: ");
-        String username = sc.nextLine();
+    public static final int MIN_MONTHS = 1;
+    public static final int MAX_MONTHS = 360;
 
-        System.out.print("Enter PAN number: ");
-        String pan = sc.nextLine();
+    public static final double MIN_INCOME = 1;
+    public static final double MAX_INCOME = 100_000_000;
 
-        // PAN validation
-        if (!pan.matches("[A-Z]{5}[0-9]{4}[A-Z]")) {
+    /** EMI, total payable and total interest, rounded to 2 decimals. */
+    public record EmiResult(double emi, double totalPayable, double totalInterest) { }
 
-            System.out.println("Invalid PAN number.");
-            return;
+    private LoanCalculator() { }
+
+    /**
+     * Standard reducing-balance EMI:  P * r * (1+r)^n / ((1+r)^n - 1)
+     *
+     * @param principal         loan amount (must be &gt; 0)
+     * @param annualRatePercent yearly interest rate in percent (0 is allowed)
+     * @param months            duration in months (must be &gt; 0)
+     */
+    public static EmiResult calculate(double principal, double annualRatePercent, int months) {
+
+        if (!Double.isFinite(principal) || principal <= 0) {
+            throw new IllegalArgumentException("Loan amount must be greater than zero.");
         }
 
-        System.out.print("Enter CIBIL score: ");
-        int cibil = sc.nextInt();
-
-        // CIBIL validation
-        if (cibil < 600 || cibil > 900) {
-
-            System.out.println("CIBIL score must be between 600 and 900.");
-            return;
+        if (!Double.isFinite(annualRatePercent) || annualRatePercent < 0) {
+            throw new IllegalArgumentException("Interest rate must not be negative.");
         }
 
-        sc.nextLine();
+        if (months <= 0) {
+            throw new IllegalArgumentException("Duration must be at least one month.");
+        }
 
-        System.out.println("1. Personal Loan");
-        System.out.println("2. Home Loan");
-        System.out.println("3. Car Loan");
+        double rawEmi;
 
-        System.out.print("Enter loan type: ");
-        int choice = sc.nextInt();
+        if (annualRatePercent == 0) {
 
-        LoanType loanType;
-
-        if (choice == 1) {
-
-            loanType = LoanType.PERSONAL_LOAN;
-
-        } else if (choice == 2) {
-
-            loanType = LoanType.HOME_LOAN;
-
-        } else if (choice == 3) {
-
-            loanType = LoanType.CAR_LOAN;
+            rawEmi = principal / months;
 
         } else {
 
-            System.out.println("Invalid loan type.");
-            return;
+            double monthlyRate = annualRatePercent / 12 / 100;
+            double growth = Math.pow(1 + monthlyRate, months);
+
+            rawEmi = principal * monthlyRate * growth / (growth - 1);
         }
 
+        BigDecimal emi = BigDecimal.valueOf(rawEmi).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalPayable = emi.multiply(BigDecimal.valueOf(months));
+        BigDecimal totalInterest = totalPayable
+                .subtract(BigDecimal.valueOf(principal))
+                .setScale(2, RoundingMode.HALF_UP);
 
-        double interestRate;
-
-
-        // Personal Loan
-        if (loanType == LoanType.PERSONAL_LOAN) {
-
-            if (cibil >= 750) {
-                interestRate = 10.0;
-            } else {
-                interestRate = 12.0;
-            }
-
-        }
-
-        // Home Loan
-        else if (loanType == LoanType.HOME_LOAN) {
-
-            if (cibil >= 750) {
-                interestRate = 7.5;
-            } else {
-                interestRate = 9.0;
-            }
-
-        }
-
-        // Car Loan
-        else {
-
-            if (cibil >= 750) {
-                interestRate = 8.5;
-            } else {
-                interestRate = 10.0;
-            }
-        }
-
-
-        // Generate username and password
-        String newUsername = "loan" + System.currentTimeMillis();
-        String newPassword = "Loan@" + cibil;
-
-
-        String sql =
-                "UPDATE users SET pan = ?, cibil_score = ?, "
-                + "username = ?, password = ? WHERE username = ?";
-
-
-        try {
-
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, pan);
-            ps.setInt(2, cibil);
-            ps.setString(3, newUsername);
-            ps.setString(4, newPassword);
-            ps.setString(5, username);
-
-            int rows = ps.executeUpdate();
-
-
-            if (rows > 0) {
-
-                String displayLoanType = "";
-
-                if (loanType == LoanType.PERSONAL_LOAN) {
-                    displayLoanType = "Personal Loan";
-                } else if (loanType == LoanType.HOME_LOAN) {
-                    displayLoanType = "Home Loan";
-                } else {
-                    displayLoanType = "Car Loan";
-                }
-
-
-                System.out.println();
-                System.out.println("Loan information saved successfully!");
-                System.out.println("PAN: " + pan);
-                System.out.println("CIBIL Score: " + cibil);
-                System.out.println("Loan Type: " + displayLoanType);
-                System.out.println("Interest Rate: " + interestRate + "%");
-
-
-                System.out.println();
-                System.out.println("----- Generated Credentials -----");
-                System.out.println("Username: " + newUsername);
-                System.out.println("Password: " + newPassword);
-
-
-                // Send email notification
-                String emailSql =
-                        "SELECT email FROM users WHERE username = ?";
-
-                PreparedStatement emailPs =
-                        con.prepareStatement(emailSql);
-
-                emailPs.setString(1, newUsername);
-
-                ResultSet rs = emailPs.executeQuery();
-
-
-                if (rs.next()) {
-
-                    String email = rs.getString("email");
-
-                    EmailNotification.sendEmail(
-                        email,
-                        "Your loan credentials are Username: "
-                        + newUsername
-                        + " Password: "
-                        + newPassword
-                    );
-                }
-
-
-                rs.close();
-                emailPs.close();
-
-            } else {
-
-                System.out.println("User not found.");
-            }
-
-
-            ps.close();
-            con.close();
-
-
-        } catch (Exception e) {
-
-            System.out.println("Unable to process loan information.");
-            e.printStackTrace();
-        }
+        return new EmiResult(
+                emi.doubleValue(),
+                totalPayable.doubleValue(),
+                totalInterest.doubleValue());
     }
 }
-
-
-

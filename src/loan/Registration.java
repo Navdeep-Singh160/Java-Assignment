@@ -1,57 +1,42 @@
 package loan;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.util.Scanner;
+import java.util.Locale;
 
-public class Registration {
+public final class Registration {
 
+    private Registration() { }
+
+    /** Self-registration of a normal customer account. */
     public static void registerUser() {
+        createAccount(User.ROLE_USER);
+    }
 
-        Scanner sc = new Scanner(System.in);
+    /**
+     * Collects and validates every field, hashes the password and saves the account.
+     * Also used to create the first administrator on a fresh database.
+     */
+    public static void createAccount(String role) {
 
-        System.out.print("Enter username: ");
-        String username = sc.nextLine();
-
-        System.out.print("Enter full name: ");
-        String fullName = sc.nextLine();
-
-        System.out.print("Enter email: ");
-        String email = sc.nextLine();
-
-        System.out.print("Enter mobile number: ");
-        String mobile = sc.nextLine();
-
-        System.out.print("Enter password: ");
-        String password = sc.nextLine();
-
-        String sql = "INSERT INTO users "
-                   + "(username, full_name, email, mobile, password) "
-                   + "VALUES (?, ?, ?, ?, ?)";
+        String username = ConsoleIO.readValidated("Enter username: ", Validator::username);
+        String fullName = ConsoleIO.readValidated("Enter full name: ", Validator::fullName);
+        String email = ConsoleIO.readValidated("Enter email: ", Validator::email)
+                .toLowerCase(Locale.ROOT);
+        String mobile = ConsoleIO.readValidated("Enter mobile number: ", Validator::mobile);
+        String password = ConsoleIO.readNewPassword("Enter password: ");
 
         try {
-            Connection con = DBConnection.getConnection();
-
-            PreparedStatement ps = con.prepareStatement(sql);
-
-            ps.setString(1, username);
-            ps.setString(2, fullName);
-            ps.setString(3, email);
-            ps.setString(4, mobile);
-            ps.setString(5, password);
-
-            ps.executeUpdate();
+            UserDao.create(username, fullName, email, mobile,
+                    PasswordUtil.hash(password), role);
 
             System.out.println("Registration successful!");
 
-            ps.close();
-            con.close();
+        } catch (DataAccessException e) {
 
-        } catch (Exception e) {
-            System.out.println("Registration failed!");
-            e.printStackTrace();
+            if (e.isDuplicate()) {
+                System.out.println("That username or email is already registered.");
+            } else {
+                throw e;
+            }
         }
     }
 }
-
-

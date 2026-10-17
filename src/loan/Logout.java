@@ -1,11 +1,10 @@
 package loan;
 
-public class Logout {
+public final class Logout {
+
+    private Logout() { }
 
     public static void logoutUser() {
-
         System.out.println("Logged out successfully!");
-
     }
 }
-
